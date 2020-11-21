@@ -1,0 +1,15 @@
+*
+!*/
+!*.cpp
+!*.cu
+!*.h
+!*.pdf
+!nbody.txt
+!CMakeLists.txt
+!Makefile
+!modules
+!*.md
+!.gitignore
+cmake-build-debug
+.idea
+tests/py-test-env/

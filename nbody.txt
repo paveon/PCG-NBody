@@ -1,0 +1,135 @@
+
+Paralelní programování na GPU (PCG 2020)
+Projekt c. 1 (cuda)
+Login: xpavel34
+
+
+Krok 0: základní implementace (měřeno na 100 krocích)
+=============================
+Velikost dat    	čas [s]
+     1024         0.535590
+ 2 * 1024         1.063574
+ 3 * 1024         1.587850
+ 4 * 1024         2.114073
+ 5 * 1024         2.639936
+ 6 * 1024         3.156148
+ 7 * 1024         3.682637
+ 8 * 1024         4.210159
+ 9 * 1024         4.731647
+10 * 1024         5.257010
+11 * 1024         5.794564
+12 * 1024         6.299874
+13 * 1024         6.840439
+14 * 1024         14.402029
+15 * 1024         15.436546
+16 * 1024         16.480739
+17 * 1024         17.548150
+18 * 1024         18.551663
+19 * 1024         19.737572
+20 * 1024         20.757153
+21 * 1024         21.821918
+22 * 1024         22.866527
+23 * 1024         24.088623
+24 * 1024         25.127657
+25 * 1024         26.236346
+26 * 1024         27.263480
+27 * 1024         41.620937
+28 * 1024         43.155819
+29 * 1024         44.772352
+30 * 1024         46.373988
+
+
+Vyskytla se nějaká anomálie v datech
+Pokud ano, vysvětlete:
+
+Při spuštění se vstupem o velikosti 14*1024 je doba běhu více než
+dvojnásobná oproti době běhu při spuštění se vstupem o velikosti 13*1024.
+Stejně tak mezi velikostmi 26*1024 a 27*1024 je velký časový skok.
+Tyto anomálie jsou způsobeny tím, že maximální počet vláken na jeden blok
+je pro GPU Tesla K20m 1024. Zároveň má tato karta 13 SM jednotek. Díky
+tomu se pravděpodobně při velikostech pod 14*1024 přímo mapuje jeden blok
+na jeden multiprocesor a jsou díky tomu vytíženy všechny na jeden běh.
+Při vyšších velikostech je poté potřeba na některé SM jednotky vložit více
+bloků, což má za následek, že některé jednotky mají dvojnásobný objem práce.
+Tím se alespoň zdvojnásobí doba běhu, protože se musí čekat, až svou práci
+dokončí všechny SM jednotky.
+
+
+Time: 4.158216 s
+Time: 13.862446 s
+
+Krok 1: optimalizace kódu
+=====================
+Došlo ke zrychlení?
+Ano došlo, více než k dvojnásobnému zrychlení při 8K vstupu
+
+Popište dva hlavní důvody:
+Dva hlavní důvody jsou:
+    1) menší overhead spouštění kernelů, díky jejich sloučení do jednoho
+    2) optimalizace výrazů, což vedlo k drastickému snížení celkového počtu
+        FP operací, zejména speciálních operací (sqrt apod)
+    Kromě toho, že je celkově potřeba spouštět méně kernelů, tak je snížen
+    overhead tím, že není potřeba opakovaně načítat stejná data z globální
+    paměti, což vede také k drastickému snížení celkového počtu load transakcí.
+    Na závěr pomáhá také double buffering dat, čímž odpadá nutnost synchronizace
+    vláken.
+
+Porovnejte metriky s předchozím krokem:
+
+Následující metriky potvrzují dva hlavní důvody zrychlení.
+Occupancy ani sm_efficiency se téměř nezměnilo, ale celkový
+počet čtení z globální paměti a počet SP operací se výrazně snížil.
+Dále je vidět, že se díky sloučení kernelů podařilo výrazně snížit
+pamětové prostoje SM procesorů:
+
+                      flop_sp_efficiency  sm_efficiency  achieved_occupancy  gld_transactions  flop_count_sp  stall_memory_throttle  stall_memory_dependency
+                                       %              %                                                                           %                        %
+calculate_gravitation_velocity     17.67          94.93            0.620806          33558016  2.4964006e+10                   0.00                    14.11
+calculate_collision_velocity        8.40          95.13            0.620022          50336768     5637079040                   7.03                    13.82
+update_particle                     0.43          44.53            0.563298              4608         147456                   0.00                    50.03
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+calculate_velocity                 16.81          93.53            0.622593          33592320  1.0737156e+10                   0.01                     7.56
+               
+
+Krok 2: sdílená paměť
+=====================
+Došlo ke zrychlení?
+Ano došlo, ale na menších vstupech není zrychlení až tak drastické
+a projeví se více až u velkých vstupů.
+
+Zdůvodněte:
+Snížil se celkový počet load transakcí z globální paměti, což vedlo ke
+zmenšení prostojů SM procesorů a zvýšení jejich efektivity.
+
+Porovnejte metriky s předchozím krokem:
+Jak bylo zmíněno, největší změny nastaly u počtu load transakcí z globální
+paměti, pak v procentu doby, kdy SM procesory čekají na data a k menší změně
+celkové efektivity SM procesorů:
+
+                  flop_sp_efficiency  gld_transactions  stall_memory_dependency  shared_load_transactions
+                                   %                                          %
+calculate_velocity             18.07          33592320                     8.21                         0
+calculate_velocity             21.81            234496                     0.01                  33570816
+
+
+Krok 5: analýza výkonu (měřeno na 500 krocích)
+======================
+N         čas CPU [s]  čas GPU [s]  propustnost paměti [MB/s]  výkon [MFLOPS]  zrychlení [-]
+128          0.339417     0.085264                        206            4590           3.98    (blok 128)
+256          1.359650     0.134163                        230            1377          10.13    (blok 256)
+512          5.419440     0.234844                        276           22623          23.08    (blok 512)
+
+1024          21.6883     0.439514                        392           47893          49.35    (blok 512)
+2048          86.6916     0.846738                        630           99181         102.38    (blok 512)
+4096         346.8660     0.320459                       1399          209553        1082.40    (blok 256)
+8192        1388.3500     3.317633                       2473          404626         418.48    (blok 256)
+16384      ~5553.4000     7.235652                       4206          742036        ~767.51    (blok 256)
+32768     ~22213.6000    27.989716                       5325          767268        ~793.63    (blok 256)
+65536     ~88854.4000   111.837320                       6628          768088        ~794.50    (blok 256)
+131072   ~355417.6000   447.026254                       7647         ~768642        ~795.07    (blok 256)
+
+Od jakého počtu částic se vyplatí počítat na grafické kartě?
+Jestliže bychom uvažovali, že optimalizovaná paralelní CPU verze
+by byla cca 10x rychlejší, pak by se vyplatilo počítat na grafické
+kartě cca od velikosti 256 prvků.
+===================================
