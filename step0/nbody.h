@@ -36,13 +36,6 @@ typedef struct
 
 constexpr size_t t_particles_member_count = 7;
 
-typedef struct
-{
-    float4* positions;
-    float4* velocities;
-} t_particles_alt;
-
-constexpr size_t t_particles_alt_member_count = 2;
 
 /**
  * Velocities data structure (to be used as buffer for partial results)
@@ -56,12 +49,6 @@ typedef struct
 
 constexpr size_t t_velocities_member_count = 3;
 
-typedef struct
-{
-    float4* directions;
-} t_velocities_alt;
-
-constexpr size_t t_velocities_alt_member_count = 1;
 
 /**
  * CUDA kernel to calculate gravitation velocity
@@ -72,11 +59,6 @@ constexpr size_t t_velocities_alt_member_count = 1;
  */
 __global__ void calculate_gravitation_velocity(t_particles  p,
                                                t_velocities tmp_vel,
-                                               int          N,
-                                               float        dt);
-
-__global__ void calculate_gravitation_velocity2(t_particles_alt  p,
-                                               t_velocities_alt tmp_vel,
                                                int          N,
                                                float        dt);
 
@@ -92,11 +74,6 @@ __global__ void calculate_collision_velocity(t_particles  p,
                                              int          N,
                                              float        dt);
 
-__global__ void calculate_collision_velocity2(t_particles_alt  p,
-                                             t_velocities_alt tmp_vel,
-                                             int          N,
-                                             float        dt);
-
 /**
  * CUDA kernel to update particles
  * @param p       - particles
@@ -106,11 +83,6 @@ __global__ void calculate_collision_velocity2(t_particles_alt  p,
  */
 __global__ void update_particle(t_particles  p,
                                 t_velocities tmp_vel,
-                                int           N,
-                                float         dt);
-
-__global__ void update_particle2(t_particles_alt  p,
-                                t_velocities_alt tmp_vel,
                                 int           N,
                                 float         dt);
 

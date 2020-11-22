@@ -65,10 +65,6 @@ int main(int argc, char **argv) {
     const size_t recordsNum = (writeFreq > 0) ? (steps + writeFreq - 1) / writeFreq : 0;
     writeFreq = (writeFreq > 0) ? writeFreq : 0;
 
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                            FILL IN: CPU side memory allocation (step 0)                                          //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     size_t particleCountRounded = roundUp(N, 32);
     size_t memberArrayByteSize = particleCountRounded * sizeof(float);
     size_t bytesTotal = memberArrayByteSize * t_particles_member_count;
@@ -83,24 +79,6 @@ int main(int argc, char **argv) {
             .weights = &particlesHostPool.data()[particleCountRounded * 6]
     };
 
-//    memberArrayByteSize = particleCountRounded * sizeof(float4);
-//    bytesTotal = memberArrayByteSize * t_particles_alt_member_count;
-//    CudaHostMemoryPool<float4> particlesHostPoolAlt(bytesTotal, cudaHostAllocWriteCombined);
-//    t_particles_alt particles_cpu_alt{
-//            .positions = particlesHostPoolAlt.data(),
-//            .velocities = &particlesHostPoolAlt.data()[particleCountRounded]
-//    };
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                              FILL IN: memory layout descriptor (step 0)                                          //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /*
-     * Caution! Create only after CPU side allocation
-     * parameters:
-     *                      Stride of two               Offset of the first
-     *  Data pointer        consecutive elements        element in floats,
-     *                      in floats, not bytes        not bytes
-    */
     MemDesc md(
             particles_cpu.positionsX, 1, 0,              // Postition in X
             particles_cpu.positionsY, 1, 0,              // Postition in Y
@@ -112,40 +90,19 @@ int main(int argc, char **argv) {
             N,                                                                  // Number of particles
             recordsNum);                                                        // Number of records in output file
 
-//    MemDesc md_alt(
-//            &particles_cpu_alt.positions[0].x, 4, 0,              // Postition in X
-//            &particles_cpu_alt.positions[0].y, 4, 0,              // Postition in Y
-//            &particles_cpu_alt.positions[0].z, 4, 0,              // Postition in Z
-//            &particles_cpu_alt.velocities[0].x, 4, 0,              // Velocity in X
-//            &particles_cpu_alt.velocities[0].y, 4, 0,              // Velocity in Y
-//            &particles_cpu_alt.velocities[0].z, 4, 0,              // Velocity in Z
-//            &particles_cpu_alt.positions[0].w, 4, 0,              // Weight
-//            N,                                                                  // Number of particles
-//            recordsNum);                                                        // Number of records in output file
-
     // Initialisation of helper class and loading of input data
     auto outputFile = std::string(argv[9]);
     H5Helper h5Helper(argv[8], outputFile, md);
 
-//    auto outputFile_alt = outputFile.substr(0, outputFile.length() - 3) + "_alt.h5";
-//    H5Helper h5Helper_alt(argv[8], outputFile_alt, md_alt);
-
     try {
         h5Helper.init();
         h5Helper.readParticleData();
-
-//        h5Helper_alt.init();
-//        h5Helper_alt.readParticleData();
     }
     catch (const std::exception &e) {
         std::cerr << e.what() << std::endl;
         return -1;
     }
 
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                                  FILL IN: GPU side memory allocation (step 0)                                    //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     memberArrayByteSize = particleCountRounded * sizeof(float);
     bytesTotal = memberArrayByteSize * t_particles_member_count;
     CudaDeviceMemoryPool<float> particlesDevicePool(bytesTotal);
@@ -167,70 +124,21 @@ int main(int argc, char **argv) {
             .directionZ = &velocitiesDevicePool.data()[particleCountRounded * 2]
     };
 
-
-    /// Alternative layout device data
-//    memberArrayByteSize = particleCountRounded * sizeof(float4);
-//    bytesTotal = memberArrayByteSize * t_particles_alt_member_count;
-//    CudaDeviceMemoryPool<float4> particlesDevicePoolAlt(bytesTotal);
-//    t_particles_alt particles_gpu_alt{
-//            .positions = particlesDevicePoolAlt.data(),
-//            .velocities = &particlesDevicePoolAlt.data()[particleCountRounded]
-//    };
-//
-//    bytesTotal = memberArrayByteSize * t_velocities_alt_member_count;
-//    CudaDeviceMemoryPool<float4> velocitiesDevicePoolAlt(bytesTotal);
-//    t_velocities_alt velocities_gpu_alt{
-//            .directions = velocitiesDevicePoolAlt.data(),
-//    };
-
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                                       FILL IN: memory transfers (step 0)                                         //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     cudaMemcpy(particlesDevicePool.data(), particlesHostPool.data(), particlesHostPool.byteSize, cudaMemcpyHostToDevice);
     velocitiesDevicePool.Memset(0);
-
-//    cudaMemcpy(particlesDevicePoolAlt.data(), particlesHostPoolAlt.data(), particlesHostPoolAlt.byteSize, cudaMemcpyHostToDevice);
-//    velocitiesDevicePoolAlt.Clear(0);
 
     gettimeofday(&t1, 0);
 
     dim3 blockSize(thr_blc);
     dim3 gridSize(simulationGrid);
     for (int s = 0; s < steps; s++) {
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                       FILL IN: kernels invocation (step 0)                                     //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         calculate_gravitation_velocity<<<gridSize, blockSize>>>(particles_gpu, velocities_gpu, N, dt);
         calculate_collision_velocity<<<gridSize, blockSize>>>(particles_gpu, velocities_gpu, N, dt);
         update_particle<<<gridSize, blockSize>>>(particles_gpu, velocities_gpu, N, dt);
 
-//        calculate_gravitation_velocity2<<<gridSize, blockSize>>>(particles_gpu_alt, velocities_gpu_alt, N, dt);
-//        calculate_collision_velocity2<<<gridSize, blockSize>>>(particles_gpu_alt, velocities_gpu_alt, N, dt);
-//        update_particle2<<<gridSize, blockSize>>>(particles_gpu_alt, velocities_gpu_alt, N, dt);
-
         /// Clear device memory for temporary velocities
         velocitiesDevicePool.Memset(0);
-//        velocitiesDevicePoolAlt.Clear(0);
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                          FILL IN: synchronization  (step 4)                                    //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        if (writeFreq > 0 && (s % writeFreq == 0)) {
-            //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-            //                          FILL IN: synchronization and file access logic (step 4)                             //
-            //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        }
     }
-
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //              FILL IN: invocation of center-of-mass kernel (step 3.1, step 3.2, step 4)                           //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//    dim3 gridDimension(ceil(float(inputLength) / float(blockDim.x)));
-//    centerOfMass<<<gridDimension, blockDimension>>>(particles_gpu, &comOnGPU.x, &comOnGPU.y, &comOnGPU.z, nullptr, nullptr, 0);
-
 
     cudaDeviceSynchronize();
 
@@ -240,17 +148,9 @@ int main(int argc, char **argv) {
     double t = (1000000.0 * (t2.tv_sec - t1.tv_sec) + t2.tv_usec - t1.tv_usec) / 1000000.0;
     printf("Time: %f s\n", t);
 
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                             FILL IN: memory transfers for particle data (step 0)                                 //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     float4 comOnGPU{};
     cudaMemcpy(particlesHostPool.data(), particlesDevicePool.data(), particlesHostPool.byteSize, cudaMemcpyDeviceToHost);
-//    cudaMemcpy(particlesHostPoolAlt.data(), particlesDevicePoolAlt.data(), particlesHostPoolAlt.byteSize, cudaMemcpyDeviceToHost);
 
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                        FILL IN: memory transfers for center-of-mass (step 3.1, step 3.2)                         //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     float4 comOnCPU = centerOfMassCPU(md);
 
     std::cout << "Center of mass on CPU:" << std::endl
@@ -270,9 +170,6 @@ int main(int argc, char **argv) {
     // Writing final values to the file
     h5Helper.writeComFinal(comOnGPU.x, comOnGPU.y, comOnGPU.z, comOnGPU.w);
     h5Helper.writeParticleDataFinal();
-
-//    h5Helper_alt.writeComFinal(comOnGPU.x, comOnGPU.y, comOnGPU.z, comOnGPU.w);
-//    h5Helper_alt.writeParticleDataFinal();
 
     return 0;
 }// end of main

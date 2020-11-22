@@ -129,97 +129,101 @@ __global__ void calculate_velocity(t_particles p_in, t_particles p_out, int N, f
  */
 __global__ void
 centerOfMass(t_particles p, float *comX, float *comY, float *comZ, float *comW, int *lock, const int N) {
-    extern __shared__ float sharedCOMs[];
-    float *posX = sharedCOMs;
-    float *posY = &sharedCOMs[blockDim.x];
-    float *posZ = &sharedCOMs[blockDim.x * 2];
-    float *weights = &sharedCOMs[blockDim.x * 3];
+    unsigned int warpCount = blockDim.x >> 5u;
+    extern __shared__ volatile float sharedCOMs[];
+    volatile float *sharedX = sharedCOMs;
+    volatile float *sharedY = &sharedCOMs[warpCount];
+    volatile float *sharedZ = &sharedCOMs[warpCount * 2];
+    volatile float *sharedWeights = &sharedCOMs[warpCount * 3];
 
+    unsigned int tx = threadIdx.x;
     unsigned int threadsTotal = gridDim.x * blockDim.x;
     unsigned int gridSteps = ceil(float(N) / threadsTotal);
 
     /// Local accumulator for COM (in case one thread block runs more than once)
     float4 comLocal = {0.0f, 0.0f, 0.0f, 0.0f};
 
-    /// Grid stride loop (if there's not enough total threads to cover all particles)
     for (unsigned int gridIdx = 0; gridIdx < gridSteps; gridIdx++) {
-        unsigned int globalIdx = (gridIdx * threadsTotal) + (blockIdx.x * blockDim.x + threadIdx.x);
-
+        unsigned int globalIdx = (gridIdx * threadsTotal) + (blockIdx.x * blockDim.x + tx);
         bool inBounds = globalIdx < N;
         float weight = inBounds ? p.weights[globalIdx] : 0.0f;
-        float dx = inBounds ? p.positionsX[globalIdx] : 0.0f;
-        float dy = inBounds ? p.positionsY[globalIdx] : 0.0f;
-        float dz = inBounds ? p.positionsZ[globalIdx] : 0.0f;
         float dw = (weight > 0.0f) ? 1.0f : 0.0f;
-        posX[threadIdx.x] = dx * dw;
-        posY[threadIdx.x] = dy * dw;
-        posZ[threadIdx.x] = dz * dw;
-        weights[threadIdx.x] = weight;
+        float posX = inBounds ? (p.positionsX[globalIdx] * dw) : 0.0f;
+        float posY = inBounds ? (p.positionsY[globalIdx] * dw) : 0.0f;
+        float posZ = inBounds ? (p.positionsZ[globalIdx] * dw) : 0.0f;
 
-        __syncthreads();
-
-        /// Block level reduction in shared memory
-        for (unsigned int stride = blockDim.x >> 1ul; stride > 32; stride >>= 1ul) {
-            if (threadIdx.x < stride) {
-                dx = posX[threadIdx.x + stride] - posX[threadIdx.x];
-                dy = posY[threadIdx.x + stride] - posY[threadIdx.x];
-                dz = posZ[threadIdx.x + stride] - posZ[threadIdx.x];
-                weight = weights[threadIdx.x + stride];
-                dw = ((weight + weights[threadIdx.x]) > 0.0f) ? (weight / (weight + weights[threadIdx.x])) : 0.0f;
-
-                posX[threadIdx.x] += dx * dw;
-                posY[threadIdx.x] += dy * dw;
-                posZ[threadIdx.x] += dz * dw;
-                weights[threadIdx.x] += weights[threadIdx.x + stride];
-            }
-            __syncthreads();
+        #pragma unroll
+        for (unsigned int stride = 16; stride > 0; stride >>= 1u) {
+            float w2 = __shfl_down_sync(0xffffffff, weight, stride);
+            weight += w2;
+            dw = ((weight) > 0.0f) ? (w2 / weight) : 0.0f;
+            posX += (__shfl_down_sync(0xffffffff, posX, stride) - posX) * dw;
+            posY += (__shfl_down_sync(0xffffffff, posY, stride) - posY) * dw;
+            posZ += (__shfl_down_sync(0xffffffff, posZ, stride) - posZ) * dw;
         }
 
-        /// Warp-synchronized, remaining 6 iterations can be performed without block barriers
-        if (threadIdx.x < 32) {
-            for (unsigned int stride = min(32, blockDim.x >> 1ul); stride > 0; stride >>= 1ul) {
-                if (threadIdx.x < stride) {
-                    dx = posX[threadIdx.x + stride] - posX[threadIdx.x];
-                    dy = posY[threadIdx.x + stride] - posY[threadIdx.x];
-                    dz = posZ[threadIdx.x + stride] - posZ[threadIdx.x];
-                    weight = weights[threadIdx.x + stride];
-                    dw = ((weight + weights[threadIdx.x]) > 0.0f) ? (weight / (weight + weights[threadIdx.x])) : 0.0f;
-
-                    posX[threadIdx.x] += dx * dw;
-                    posY[threadIdx.x] += dy * dw;
-                    posZ[threadIdx.x] += dz * dw;
-                    weights[threadIdx.x] += weights[threadIdx.x + stride];
-                }
-                __syncwarp();  /// Nvidia Volta and newer
-            }
-        }
-
-        /// Still need to synchronize at the end, otherwise some warps
-        /// from the block might continue with the next grid step in the
-        /// meantime and overwrite our shared memory.
-        __syncthreads();
-
-        /// Merge COMs across multile grid steps (if there's more than 1, otherwise result is unchanged)
-        if (threadIdx.x == 0 && globalIdx < N) {
-            dw = ((weights[0] + comLocal.w) > 0.0f) ? (weights[0] / (weights[0] + comLocal.w)) : 0.0f;
-            comLocal.x += (posX[0] - comLocal.x) * dw;
-            comLocal.y += (posY[0] - comLocal.y) * dw;
-            comLocal.z += (posZ[0] - comLocal.z) * dw;
-            comLocal.w += weights[0];
+        /// First thread of each warp stores the reduced result to the local variable
+        /// to avoid shared memory access when 'gridSteps > 1'
+        if ((tx % 32u == 0) && globalIdx < N) {
+            dw = ((weight + comLocal.w) > 0.0f) ? (weight / (weight + comLocal.w)) : 0.0f;
+            comLocal.x += (posX - comLocal.x) * dw;
+            comLocal.y += (posY - comLocal.y) * dw;
+            comLocal.z += (posZ - comLocal.z) * dw;
+            comLocal.w += weight;
         }
     }
 
-    /// Global reduction
-    if (threadIdx.x == 0) {
-        while (atomicExch(lock, 1u) != 0u);  /// Lock
+    /// First thread from each warp stores the warp-reduced data into the shared memory
+    /// Will cause some bank-conflicts if the block is larger than 1024 threads
+    unsigned int warpID = tx >> 5u;
+    if (tx % 32u == 0) {
+        sharedX[warpID] = comLocal.x;
+        sharedY[warpID] = comLocal.y;
+        sharedZ[warpID] = comLocal.z;
+        sharedWeights[warpID] = comLocal.w;
+    }
+    __syncthreads();
 
-        float dw = ((comLocal.w + *comW) > 0.0f) ? (comLocal.w / (comLocal.w + *comW)) : 0.0f;
-        *comX += (comLocal.x - *comX) * dw;
-        *comY += (comLocal.y - *comY) * dw;
-        *comZ += (comLocal.z - *comZ) * dw;
-        *comW += comLocal.w;
+    /// Block level reduction in shared memory
+    for (unsigned int stride = warpCount >> 1ul; stride > 16; stride >>= 1ul) {
+        if (tx < stride) {
+            float weight = sharedWeights[tx + stride];
+            float dw = ((weight + sharedWeights[tx]) > 0.0f) ? (weight / (weight + sharedWeights[tx])) : 0.0f;
 
-        atomicExch(lock, 0u); /// Unlock
+            sharedX[tx] += (sharedX[tx + stride] - sharedX[tx]) * dw;
+            sharedY[tx] += (sharedY[tx + stride] - sharedY[tx]) * dw;
+            sharedZ[tx] += (sharedZ[tx + stride] - sharedZ[tx]) * dw;
+            sharedWeights[tx] += sharedWeights[tx + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tx < min(32, warpCount)) {
+        float posX = sharedX[tx];
+        float posY = sharedY[tx];
+        float posZ = sharedZ[tx];
+        float weight = sharedWeights[tx];
+
+        for (unsigned int stride = min(16, warpCount >> 1ul); stride > 0; stride >>= 1u) {
+            float w2 = __shfl_down_sync(0xffffffff, weight, stride);
+            weight += w2;
+            float dw = ((weight) > 0.0f) ? (w2 / weight) : 0.0f;
+            posX += (__shfl_down_sync(0xffffffff, posX, stride) - posX) * dw;
+            posY += (__shfl_down_sync(0xffffffff, posY, stride) - posY) * dw;
+            posZ += (__shfl_down_sync(0xffffffff, posZ, stride) - posZ) * dw;
+        }
+
+        if (tx == 0) {
+            while (atomicExch(lock, 1u) != 0u);  /// Lock
+
+            float dw = ((weight + *comW) > 0.0f) ? (weight / (weight + *comW)) : 0.0f;
+            *comX += (posX - *comX) * dw;
+            *comY += (posY - *comY) * dw;
+            *comZ += (posZ - *comZ) * dw;
+            *comW += weight;
+
+            atomicExch(lock, 0u); /// Unlock
+        }
     }
 }// end of centerOfMass
 //----------------------------------------------------------------------------------------------------------------------

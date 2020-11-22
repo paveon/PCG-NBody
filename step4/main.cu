@@ -138,7 +138,9 @@ int main(int argc, char **argv) {
     CudaDeviceMemoryPool<int> lock_gpu(sizeof(int));
     com_gpu.Memset(0);
     lock_gpu.Memset(0);
-    size_t smSizeCOM = 4 * sizeof(float) * red_thr_blc;
+
+    size_t warpsPerBlock = (red_thr_blc + 32 - 1) / 32;
+    size_t smSizeCOM = 4 * sizeof(float) * warpsPerBlock;
 
     CudaStream velocityComputeStream, comComputeStream, transferStream;
     CudaEvent particleTransferFinished, comTransferFinished;
@@ -163,6 +165,8 @@ int main(int argc, char **argv) {
                 N
         );
         lock_gpu.MemsetAsync(0, comComputeStream.data());
+
+        comComputeFinished.Record(comComputeStream);  /// Signal finished COM computation
 
         if (writeFreq > 0 && (s % writeFreq == 0)) {
             /// Wait for compute from previous iteration to finish
@@ -197,7 +201,6 @@ int main(int argc, char **argv) {
         }
 
         velocityComputeFinished.Record(velocityComputeStream);  /// Signal finished velocity computation
-        comComputeFinished.Record(comComputeStream);  /// Signal finished COM computation
 
         /// Synchronize both compute streams across loop iterations, i.e.,
         /// both compute streams must wait for each other to finish current iteration

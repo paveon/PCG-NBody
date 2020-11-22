@@ -36,13 +36,6 @@ typedef struct
 
 constexpr size_t t_particles_member_count = 7;
 
-typedef struct
-{
-    float4* positions;
-    float4* velocities;
-} t_particles_alt;
-
-constexpr size_t t_particles_alt_member_count = 2;
 
 /**
  * Velocities data structure (to be used as buffer for partial results)
@@ -56,12 +49,6 @@ typedef struct
 
 constexpr size_t t_velocities_member_count = 3;
 
-typedef struct
-{
-    float4* directions;
-} t_velocities_alt;
-
-constexpr size_t t_velocities_alt_member_count = 1;
 
 /**
  * CUDA kernel to calculate velocity
@@ -71,11 +58,6 @@ constexpr size_t t_velocities_alt_member_count = 1;
  * @param dt      - Size of the time step
  */
 __global__ void calculate_velocity(t_particles p_in,
-                                   t_particles p_out,
-                                   int N,
-                                   float dt);
-
-__global__ void calculate_velocity2(t_particles p_in,
                                    t_particles p_out,
                                    int N,
                                    float dt);

@@ -138,27 +138,14 @@ int main(int argc, char **argv) {
                 N,
                 dt
         );
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                          FILL IN: synchronization  (step 4)                                    //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        if (writeFreq > 0 && (s % writeFreq == 0)) {
-            //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-            //                          FILL IN: synchronization and file access logic (step 4)                             //
-            //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        }
     }
 
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //              FILL IN: invocation of center-of-mass kernel (step 3.1, step 3.2, step 4)                           //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     CudaDeviceMemoryPool<float4> com_gpu(sizeof(float4));
     CudaDeviceMemoryPool<int> lock_gpu(sizeof(int));
     com_gpu.Memset(0);
     lock_gpu.Memset(0);
-    sharedMemorySize = 4 * sizeof(float) * red_thr_blc;
+    size_t warpsPerBlock = (red_thr_blc + 32 - 1) / 32;
+    sharedMemorySize = 4 * sizeof(float) * warpsPerBlock;
     centerOfMass<<<reductionGrid, red_thr_blc, sharedMemorySize>>>(particles_gpu[steps & 1ul],
                                                                    &com_gpu.data()[0].x,
                                                                    &com_gpu.data()[0].y,
@@ -176,18 +163,11 @@ int main(int argc, char **argv) {
     double t = (1000000.0 * (t2.tv_sec - t1.tv_sec) + t2.tv_usec - t1.tv_usec) / 1000000.0;
     printf("Time: %f s\n", t);
 
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                             FILL IN: memory transfers for particle data (step 0)                                 //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     cudaMemcpy(particlesHostPool.data(),
                particleDevicePools[steps & 1ul].data(),
                particlesHostPool.byteSize,
                cudaMemcpyDeviceToHost);
 
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //                        FILL IN: memory transfers for center-of-mass (step 3.1, step 3.2)                         //
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     CudaHostMemoryPool<float4> com_cpu(sizeof(float4), cudaHostAllocDefault);
     cudaMemcpy(com_cpu.data(), com_gpu.data(), com_cpu.byteSize, cudaMemcpyDeviceToHost);
     float4 comOnGPU{

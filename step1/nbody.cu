@@ -78,55 +78,6 @@ __global__ void calculate_velocity(t_particles p_in, t_particles p_out, int N, f
     }
 }// end of calculate_gravitation_velocity
 
-__global__ void calculate_velocity2(t_particles p_in, t_particles p_out, int N, float dt) {
-    for (unsigned int gID = blockIdx.x * blockDim.x + threadIdx.x; gID < N; gID += blockDim.x * gridDim.x) {
-        float dx, dy, dz;
-        float accVelocityX = 0;
-        float accVelocityY = 0;
-        float accVelocityZ = 0;
-
-        float p1_x = p_in.positionsX[gID];
-        float p1_y = p_in.positionsY[gID];
-        float p1_z = p_in.positionsZ[gID];
-        float p1_vel_x = p_in.velocitiesX[gID];
-        float p1_vel_y = p_in.velocitiesY[gID];
-        float p1_vel_z = p_in.velocitiesZ[gID];
-        float p1_weight = p_in.weights[gID];
-        for (int particleIdx = 0; particleIdx < N; particleIdx++) {
-            float p2_weight = p_in.weights[particleIdx];
-            float p2_vel_x = p_in.velocitiesX[particleIdx];
-            float p2_vel_y = p_in.velocitiesY[particleIdx];
-            float p2_vel_z = p_in.velocitiesZ[particleIdx];
-
-            dx = p1_x - p_in.positionsX[particleIdx];
-            dy = p1_y - p_in.positionsY[particleIdx];
-            dz = p1_z - p_in.positionsZ[particleIdx];
-            float rr = dx * dx + dy * dy + dz * dz;
-            float r = sqrt(rr);
-            float r3 = rr * r + FLT_MIN;
-            float G_dt_r3 = -G * dt / r3;
-            float Fg_dt_m2_r = G_dt_r3 * p2_weight;
-            float weightSum = p1_weight + p2_weight;
-            float weightDiff = p1_weight - p2_weight;
-            float p2_w2 = 2 * p2_weight;
-
-            bool notColliding = r > COLLISION_DISTANCE;
-            accVelocityX += notColliding ? Fg_dt_m2_r * dx : ((p1_vel_x * weightDiff + p2_w2 * p2_vel_x) / weightSum) - p1_vel_x;
-            accVelocityY += notColliding ? Fg_dt_m2_r * dy : ((p1_vel_y * weightDiff + p2_w2 * p2_vel_y) / weightSum) - p1_vel_y;
-            accVelocityZ += notColliding ? Fg_dt_m2_r * dz : ((p1_vel_z * weightDiff + p2_w2 * p2_vel_z) / weightSum) - p1_vel_z;
-        }
-
-        p_out.velocitiesX[gID] = p1_vel_x + accVelocityX;
-        p_out.velocitiesY[gID] = p1_vel_y + accVelocityY;
-        p_out.velocitiesZ[gID] = p1_vel_z + accVelocityZ;
-
-        p_out.positionsX[gID] = p1_x + p_out.velocitiesX[gID] * dt;
-        p_out.positionsY[gID] = p1_y + p_out.velocitiesY[gID] * dt;
-        p_out.positionsZ[gID] = p1_z + p_out.velocitiesZ[gID] * dt;
-    }
-}// end of calculate_gravitation_velocity
-//----------------------------------------------------------------------------------------------------------------------
-
 
 /**
  * CUDA kernel to update particles

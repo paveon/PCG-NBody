@@ -50,53 +50,8 @@ __global__ void calculate_gravitation_velocity(t_particles p, t_velocities tmp_v
         tmp_vel.directionZ[gID] += accVelocityZ;
     }
 }// end of calculate_gravitation_velocity
-
-//Version 2: Use 10 operations, math simplification
-//    float r3, G_dt_r3, Fg_dt_m2_r;
-//
-//    r3 = r * r * r + FLT_MIN;
-//
-//    // Fg*dt/m1/r = G*m1*m2*dt / r^3 / m1 = G*dt/r^3 * m2
-//    G_dt_r3 = -G * DT / r3;
-//    Fg_dt_m2_r = G_dt_r3 * p2.weight;
-//
-//    // vx = - Fx*dt/m2 = - Fg*dt/m2 * dx/r = - Fg*dt/m2/r * dx
-//    vx = Fg_dt_m2_r * dx;
-//    vy = Fg_dt_m2_r * dy;
-//    vz = Fg_dt_m2_r * dz;
-
-
-__global__ void calculate_gravitation_velocity2(t_particles_alt p, t_velocities_alt tmp_vel, int N, float dt) {
-    for (unsigned int gID = blockIdx.x * blockDim.x + threadIdx.x; gID < N; gID += blockDim.x * gridDim.x) {
-        float dx, dy, dz;
-        float accVelocityX = 0;
-        float accVelocityY = 0;
-        float accVelocityZ = 0;
-
-        float p1_x = p.positions[gID].x;
-        float p1_y = p.positions[gID].y;
-        float p1_z = p.positions[gID].z;
-        float p1_weight = p.positions[gID].w;
-        for (int particleIdx = 0; particleIdx < N; particleIdx++) {
-            dx = p1_x - p.positions[particleIdx].x;
-            dy = p1_y - p.positions[particleIdx].y;
-            dz = p1_z - p.positions[particleIdx].z;
-            float rr = dx * dx + dy * dy + dz * dz;
-            float r = sqrt(rr);
-            float F = -G * p1_weight * p.positions[particleIdx].w / (rr + FLT_MIN);
-
-            bool notColliding = r > COLLISION_DISTANCE;
-            accVelocityX += notColliding ? (F * dx / (r + FLT_MIN)) * dt / p1_weight : 0.0f;
-            accVelocityY += notColliding ? (F * dy / (r + FLT_MIN)) * dt / p1_weight : 0.0f;
-            accVelocityZ += notColliding ? (F * dz / (r + FLT_MIN)) * dt / p1_weight : 0.0f;
-        }
-
-        tmp_vel.directions[gID].x += accVelocityX;
-        tmp_vel.directions[gID].y += accVelocityY;
-        tmp_vel.directions[gID].z += accVelocityZ;
-    }
-}// end of calculate_gravitation_velocity
 //----------------------------------------------------------------------------------------------------------------------
+
 
 /**
  * CUDA kernel to calculate collision velocity
@@ -150,52 +105,6 @@ __global__ void calculate_collision_velocity(t_particles p, t_velocities tmp_vel
         tmp_vel.directionZ[gID] += accVelocityZ;
     }
 }// end of calculate_collision_velocity
-
-__global__ void calculate_collision_velocity2(t_particles_alt p, t_velocities_alt tmp_vel, int N, float dt) {
-    for (unsigned int gID = blockIdx.x * blockDim.x + threadIdx.x; gID < N; gID += blockDim.x * gridDim.x) {
-        // Use accumulators to avoid unnecessary global memory access between iterations
-        float accVelocityX = 0;
-        float accVelocityY = 0;
-        float accVelocityZ = 0;
-
-        float p1_x = p.positions[gID].x;
-        float p1_y = p.positions[gID].y;
-        float p1_z = p.positions[gID].z;
-        float p1_weight = p.positions[gID].w;
-        float p1_vel_x = p.velocities[gID].x;
-        float p1_vel_y = p.velocities[gID].y;
-        float p1_vel_z = p.velocities[gID].z;
-        for (int particleIdx = 0; particleIdx < N; particleIdx++) {
-            float p2_vel_x = p.velocities[particleIdx].x;
-            float p2_vel_y = p.velocities[particleIdx].y;
-            float p2_vel_z = p.velocities[particleIdx].z;
-            float p2_weight = p.positions[particleIdx].w;
-
-            float dx = p1_x - p.positions[particleIdx].x;
-            float dy = p1_y - p.positions[particleIdx].y;
-            float dz = p1_z - p.positions[particleIdx].z;
-            float rr = dx * dx + dy * dy + dz * dz;
-            float r = sqrtf(rr);
-
-            // Use temp variables to reduce redundant computations
-            float weightSum = p1_weight + p2_weight;
-            float weightDiff = p1_weight - p2_weight;
-            float p2_w2 = 2 * p2_weight;
-
-            // p1_weight * p1_vel_x - p2_weight * p1_vel_x --> p1_vel_x * (p1_weight - p2_weight)
-            // --> p1_vel_x * (weightDiff)
-
-            bool colliding = r > 0.0f && r < COLLISION_DISTANCE;
-            accVelocityX += colliding ? ((p1_vel_x * weightDiff + p2_w2 * p2_vel_x) / weightSum) - p1_vel_x : 0.0f;
-            accVelocityY += colliding ? ((p1_vel_y * weightDiff + p2_w2 * p2_vel_y) / weightSum) - p1_vel_y : 0.0f;
-            accVelocityZ += colliding ? ((p1_vel_z * weightDiff + p2_w2 * p2_vel_z) / weightSum) - p1_vel_z : 0.0f;
-        }
-
-        tmp_vel.directions[gID].x += accVelocityX;
-        tmp_vel.directions[gID].y += accVelocityY;
-        tmp_vel.directions[gID].z += accVelocityZ;
-    }
-}
 //----------------------------------------------------------------------------------------------------------------------
 
 /**
@@ -217,23 +126,6 @@ __global__ void update_particle(t_particles p, t_velocities tmp_vel, int N, floa
         p.positionsZ[gID] += p.velocitiesZ[gID] * dt;
     }
 }// end of update_particle
-
-
-__global__ void update_particle2(t_particles_alt p, t_velocities_alt tmp_vel, int N, float dt) {
-    for (unsigned int gID = blockIdx.x * blockDim.x + threadIdx.x; gID < N; gID += blockDim.x * gridDim.x) {
-        float tmpVelocity = tmp_vel.directions[gID].x;
-        p.velocities[gID].x += tmpVelocity;
-        p.positions[gID].x += tmpVelocity * dt;
-
-        tmpVelocity = tmp_vel.directions[gID].y;
-        p.velocities[gID].y += tmpVelocity;
-        p.positions[gID].y += tmpVelocity * dt;
-
-        tmpVelocity = tmp_vel.directions[gID].z;
-        p.velocities[gID].y += tmpVelocity;
-        p.positions[gID].y += tmpVelocity * dt;
-    }
-}
 //----------------------------------------------------------------------------------------------------------------------
 
 /**

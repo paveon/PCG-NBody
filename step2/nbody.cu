@@ -69,7 +69,6 @@ __global__ void calculate_velocity(t_particles p_in, t_particles p_out, int N, f
 
             /// Loop over all points in a single tile
             for (int p2_idx = 0; p2_idx < tileWidth; p2_idx++) {
-//                if (tileOffset + p2_idx >= N) break;
                 dx = p1_x - posX[p2_idx];
                 dy = p1_y - posY[p2_idx];
                 dz = p1_z - posZ[p2_idx];
